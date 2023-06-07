@@ -10,6 +10,7 @@ time activity curves. In addition, it allows specification of time intervals whe
 calculation of those peaks, entry of additional information (such as brain region and user comments) and
 instant saving of the collated information of component peaks and their corresponding time series 
 respectively.  
+* School of Life Sciences, Technical University of Munich
 """
 
 ## Import necessary packages
@@ -28,7 +29,6 @@ import scipy.io
 from scipy import ndimage
 import math
 import pandas as pd
-
 
 # Plotting
 import matplotlib
@@ -64,7 +64,6 @@ progversion = "1.0"
 
 #Segmentation algorithm
 class RegionGrow2D:   
-    
     def __init__(self, image):
         self.image = image
         self.x=image.shape[1]
@@ -167,6 +166,9 @@ class MyMplCanvas(FigureCanvas):
         self.axes2 = self.fig.add_subplot(122)
         self.fig.tight_layout()
 
+        #Parameter to control appearance of components overlaid on brain
+        self.thr =0.2
+
         self.image_path=[]
         self.ica_path=[]
         self.image_data=[]
@@ -218,7 +220,8 @@ class MyStaticMplCanvas(MyMplCanvas):
                     self.ica_data[:,:,s,i]=ndimage.gaussian_filter(self.ica_data[:,:,s,i],2)
                     self.ica_data[:,:,s,i]/=self.ica_data[:,:,:,i].max()
 
-        if n_proj!=[] and n_proj!=0:
+        if n_proj!=[] and n_proj!=0 and self.ica_data.shape[2]>=n_proj:
+            print(self.ica_data.shape)
             ica=nib.load(self.ica_path)
             self.ica_data=ica.get_fdata()
             ica_eff=np.zeros((self.ica_data.shape[0],self.ica_data.shape[1],n_proj,self.ica_data.shape[3]))
@@ -330,7 +333,7 @@ class MyStaticMplCanvas(MyMplCanvas):
                 self.axes2.set_ylabel(r'$\Delta f/f$')
                 self.fig.tight_layout()
                 self.canvas.draw()
-                
+           
 
     def slider_moved(self, v):
         if len(self.ica_data)==0:
@@ -378,8 +381,8 @@ class MyStaticMplCanvas(MyMplCanvas):
         #colour=v%12
         ICAvali=ICA3D[:,:,v-1].T
         ICAval=ICAvali/np.max(ICAvali)
-        ICAval[ICAval<0.2]=0
-        ICAval[ICAval>0.2]=1
+        ICAval[ICAval<self.thr]=0
+        ICAval[ICAval>self.thr]=1
         ICAopenval=ndimage.binary_opening(ICAval,se)
 
         self.bcg[v-1,:,:,0]=self.C[0,v-1]*ICAopenval
@@ -412,8 +415,8 @@ class MyStaticMplCanvas(MyMplCanvas):
         #colour=v%12
         ICAvali=ICA3D[:,:,v-1].T
         ICAval=ICAvali/np.max(ICAvali)
-        ICAval[ICAval<0.2]=0
-        ICAval[ICAval>0.2]=1
+        ICAval[ICAval<self.thr]=0
+        ICAval[ICAval>self.thr]=1
         ICAopenval=ndimage.binary_opening(ICAval,se)
 
         self.bcg[v-1,:,:,0]=self.C[0,v-1]*ICAopenval
@@ -519,26 +522,34 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         # self.dial.setMinimum(0)
         # self.dial.setMaximum(43)
         # self.dial.setValue(0)
-        
+        self.ICGroupBox=QGroupBox(" IC and/or Cross Section")
+        self.layout_12=QHBoxLayout()
+        self.layout1=QVBoxLayout()
+        self.layout2=QVBoxLayout()
         # Add slider and dialog box for allowing the user to navigate seamlessly through all components and instantly to desired components
         self.slider=QSlider(Qt.Horizontal)
         self.slider.valueChanged.connect(self.sliderMoved)
-        l.addWidget(self.slider)
+        
         # Form items to allow user to specify entries corresponding to peak occurence (namely - brain region, start and end time) and save them to table
         self.comp=QLineEdit()
+
         self.compBox=QDialogButtonBox(QDialogButtonBox.Ok)
         self.compBox.accepted.connect(self.compEntered)
         self.currentComp=0
+
+        l.addWidget(self.ICGroupBox)
+        l.addWidget(self.slider)
         l.addWidget(self.comp)
         l.addWidget(self.compBox)
+        
         self.slider2=QSlider(Qt.Horizontal)
         self.slider2.setRange(1,36)
         self.slider2.valueChanged.connect(self.slider2Moved)
-        l.addWidget(self.slider2)
         self.ICslice=QLineEdit()
         self.ICsliceBox=QDialogButtonBox(QDialogButtonBox.Ok)
         self.ICsliceBox.accepted.connect(self.ICsliceEntered)
         self.currentICslice=0
+        l.addWidget(self.slider2)
         l.addWidget(self.ICslice)
         l.addWidget(self.ICsliceBox)
 
@@ -613,6 +624,7 @@ class ApplicationWindow(QtWidgets.QMainWindow):
             self.view.setModel(model)
             self.regid=str(0)
 
+    # Select number of projections
     def select_projection(self,action):
         ind=self.projection_action.index(action)
         for item in (self.projection_action[:ind]+self.projection_action[ind+1:]):
@@ -677,14 +689,14 @@ class ApplicationWindow(QtWidgets.QMainWindow):
             if self.currentComp!=0:
                 self.ind=np.where(self.sc.selective_order==(self.currentComp-1))
                 self.currentComp=int(self.sc.selective_order[self.ind])
-
             self.sc.comp_entered(v=self.currentComp)
-            self.slider.setValue(self.ind[0]+1)
+            self.slider.setValue(int(self.ind[0])+1)
         except:
             self.currentComp=np.shape(self.sc.D)[1]
             self.sc.comp_entered(v=self.currentComp)
             self.slider.setValue(self.currentComp)
 
+    # Actively read 2nd slider value and display visualization of selected volume slice of component and update text box (for 3D data)
     def slider2Moved(self,event):
             if len(self.sc.ica_data)==0:
                 self.slider2.setValue(0)
@@ -692,6 +704,8 @@ class ApplicationWindow(QtWidgets.QMainWindow):
                 return
             self.sc.slider2_moved(v2=self.slider2.value()-1)
             self.ICslice.setText(str(self.slider2.value()))
+
+    # Update IC slice visualization and 2nd slider position (and value) when input is given to text box and the 'Ok' button next to it is pressed (for 3D data)
     def ICsliceEntered(self):
         if len(self.sc.ica_data)==0:
             self.slider2.setValue(0)
@@ -808,14 +822,13 @@ class ApplicationWindow(QtWidgets.QMainWindow):
             model = pandasModel(self.df)
             self.view.setModel(model)
             
-
+    # Exit operations and 'About' information
     def fileQuit(self):
         self.close()
 
     def closeEvent(self, ce):
         self.fileQuit()
 
-    # Exit operations and 'About' information
     def about(self):
         QtWidgets.QMessageBox.about(self, "About",
                                     """Application for loading Fly brain data, plotting and saving"""
